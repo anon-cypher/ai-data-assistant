@@ -9,7 +9,7 @@ from app.services.metadata_loader import load_table_metadata
 from app.services.sql_validator import validate_sql
 from app.services.db_executer import execute_sql
 from app.services.response_builder import build_response
-
+from app.services.insight_agent import generate_insight
 
 
 router = APIRouter()
@@ -72,8 +72,18 @@ async def ask_question(payload: dict):
     except Exception as e:
         return {"error": f"Database execution failed: {str(e)}"}
 
+    # Generate insight only for multi-row tables
+    insight = None
+    print("Rows Detected : ", len(rows))
+    if len(rows) > 1:
+        try:
+            insight = generate_insight(question, columns, rows)
+        except Exception as e:
+            raise("Insight Generation failed  : ", e)
+            # insight = None  # Fail silently if LLM fails
+    
     # 7️⃣ BUILD HUMAN RESPONSE
-    answer = build_response(columns, rows)
+    answer = build_response(columns, rows, insight)
 
     set_cache(key, answer)
 

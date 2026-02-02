@@ -9,3 +9,7 @@ faiss-cpu
 numpy
 langsmith 
 langchain-core
+langchain 
+langchain-openai 
+langchain-community
+deepagents
