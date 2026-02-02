@@ -1,0 +1,12 @@
+from sqlalchemy import inspect
+from app.db.connection import engine
+
+def get_schema_metadata():
+    inspector = inspect(engine)
+    schema = {}
+
+    for table_name in inspector.get_table_names():
+        columns = [col["name"] for col in inspector.get_columns(table_name)]
+        schema[table_name] = columns
+
+    return schema

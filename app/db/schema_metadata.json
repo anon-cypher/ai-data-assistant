@@ -1,0 +1,44 @@
+[
+  {
+    "table": "customers",
+    "description": "Table customers containing columns: id, name, email, country, signup_date",
+    "columns": [
+      "id",
+      "name",
+      "email",
+      "country",
+      "signup_date"
+    ]
+  },
+  {
+    "table": "orders",
+    "description": "Table orders containing columns: id, customer_id, order_date, total_amount",
+    "columns": [
+      "id",
+      "customer_id",
+      "order_date",
+      "total_amount"
+    ]
+  },
+  {
+    "table": "order_items",
+    "description": "Table order_items containing columns: id, order_id, product_id, quantity, price",
+    "columns": [
+      "id",
+      "order_id",
+      "product_id",
+      "quantity",
+      "price"
+    ]
+  },
+  {
+    "table": "products",
+    "description": "Table products containing columns: id, name, category, price",
+    "columns": [
+      "id",
+      "name",
+      "category",
+      "price"
+    ]
+  }
+]

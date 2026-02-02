@@ -1,0 +1,11 @@
+fastapi 
+uvicorn 
+python-dotenv 
+sqlalchemy 
+psycopg2-binary 
+redis 
+openai
+faiss-cpu 
+numpy
+langsmith 
+langchain-core
