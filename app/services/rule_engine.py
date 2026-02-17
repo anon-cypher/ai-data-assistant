@@ -4,6 +4,14 @@ from app.db.schema_loader import get_schema_metadata
 schema_cache = get_schema_metadata()
 
 def find_table_in_question(question: str):
+    """Return a table name if one of the known tables appears in `question`.
+
+    Args:
+     - question: The user question to inspect.
+
+    Return:
+     - The matching table name string, or `None` if no table is found.
+    """
     q = question.lower()
     for table in schema_cache.keys():
         if table.lower() in q:
@@ -12,6 +20,14 @@ def find_table_in_question(question: str):
 
 
 def match_rule_based_query(question: str):
+    """Return a simple SQL string for recognized patterns, else `None`.
+
+    Args:
+     - question: The user question to convert.
+
+    Return:
+     - A SQL string for simple matched patterns or `None` if no rule applies.
+    """
     q = question.lower()
     table = find_table_in_question(q)
 
