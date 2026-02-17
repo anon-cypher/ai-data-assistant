@@ -1,17 +1,20 @@
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
+import re
 from langsmith import traceable
-
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://openrouter.ai/api/v1"
-    )
-
-MODEL_SMALL = "openai/gpt-4o-mini"  # cheap + good for structured tasks
+from app.utils.utils import llm_chat
+from app.utils.prompts import Prompts
 
 
 def build_schema_context(selected_tables, metadata):
+    """Construct a textual schema context for `selected_tables` from `metadata`.
+
+    Args:
+     - selected_tables: Iterable of table names to include in the context.
+     - metadata: Schema metadata list/dict containing table/column info.
+
+    Return:
+     - A formatted string describing the selected tables and their columns.
+    """
     context = ""
     for table in metadata:
         if table["table_name"] in selected_tables:
@@ -19,9 +22,16 @@ def build_schema_context(selected_tables, metadata):
             context += f"Table: {table['table_name']}\nColumns: {cols}\n\n"
     return context
 
-import re
 
 def clean_llm_sql(output: str) -> str:
+    """Clean LLM output by removing surrounding markdown fences and trimming.
+
+    Args:
+     - output: Raw string returned by the LLM.
+
+    Return:
+     - A cleaned SQL string suitable for execution.
+    """
     output = output.strip()
 
     # Remove ```sql ... ``` or ``` ... ```
@@ -34,31 +44,25 @@ def clean_llm_sql(output: str) -> str:
 
 @traceable(name="sql_generation")
 def generate_sql(question, selected_tables, metadata):
+    """Generate a SQL query for `question` scoped to `selected_tables`.
+
+    Args:
+     - question: The user's natural language question.
+     - selected_tables: List of table names to consider.
+     - metadata: Schema metadata list/dict for those tables.
+
+    Return:
+     - A cleaned SQL string produced by the LLM.
+    """
     schema_context = ""
     for table in metadata:
         if table["table_name"] in selected_tables:
             cols = ", ".join(table["columns"])
             schema_context += f"Table: {table['table_name']}\nColumns: {cols}\n\n"
 
-    prompt = f"""
-Generate PostgreSQL SQL.
+    prompt = Prompts.SQL_GENERATION
+    prompt = prompt.format(schema_context=schema_context, question=question)
 
-Use only these tables:
-
-{schema_context}
-
-Return only SQL.
-
-Question: {question}
-"""
-
-    response = client.chat.completions.create(
-        model=MODEL_SMALL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=300
-    )
-
-    res = response.choices[0].message.content.strip()
+    res = llm_chat(prompt, model_key="small")
 
     return clean_llm_sql(res)

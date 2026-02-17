@@ -10,18 +10,14 @@ from app.services.sql_validator import validate_sql
 from app.services.db_executer import execute_sql
 from app.services.response_builder import build_response
 
-
-
 router = APIRouter()
 metadata = load_table_metadata()
-
 
 def normalize_question(q: str) -> str:
     return q.strip().lower()
 
-
 @router.post("/ask")
-async def ask_question(payload: dict):
+async def ask_question(payload: dict) -> dict:
     question = payload.get("question")
 
     if not question:
