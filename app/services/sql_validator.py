@@ -44,7 +44,7 @@ def enforce_limit(sql: str) -> str:
     return sql
 
 
-def validate_sql(sql: str, allowed_tables: list[str]) -> str:
+def validate_sql(sql: str, allowed_tables: list[str] | None) -> str:
     """Validate `sql` is SELECT-only, uses allowed tables, and enforces limits.
 
     Args:
@@ -63,10 +63,32 @@ def validate_sql(sql: str, allowed_tables: list[str]) -> str:
     if contains_forbidden_keywords(sql):
         raise ValueError("Query contains forbidden operations.")
 
+    # Normalize allowed_tables to a list of lowercase table names. Accept
+    # strings, lists of strings, or lists of dicts containing table metadata.
+    allowed = []
+    if allowed_tables:
+        # If a single comma-separated string was passed, split it
+        if isinstance(allowed_tables, str):
+            allowed_iter = [t.strip() for t in allowed_tables.split(",") if t.strip()]
+        else:
+            allowed_iter = allowed_tables
+
+        for t in allowed_iter:
+            if isinstance(t, dict):
+                # common keys for table name
+                name = t.get("table_name") or t.get("name") or t.get("table")
+                if name:
+                    allowed.append(name.lower())
+                    continue
+                # fall back to stringifying the dict
+                allowed.append(str(t).lower())
+            else:
+                allowed.append(str(t).lower())
+
     # Check table usage
     for word in re.findall(r"\bfrom\s+(\w+)|\bjoin\s+(\w+)", sql.lower()):
         table = next(filter(None, word))
-        if table not in [t.lower() for t in allowed_tables]:
+        if allowed and table not in allowed:
             raise ValueError(f"Unauthorized table used: {table}")
 
     sql = enforce_limit(sql)
