@@ -1,5 +1,8 @@
 from fastapi import APIRouter
 import hashlib
+import uuid
+from typing import Optional
+from langsmith import traceable
 
 from app.services.cache_service import get_cache, set_cache
 from app.services.rule_engine import match_rule_based_query
@@ -9,88 +12,216 @@ from app.services.metadata_loader import load_table_metadata
 from app.services.sql_validator import validate_sql
 from app.services.db_executer import execute_sql
 from app.services.response_builder import build_response
-<<<<<<< HEAD
 from app.services.insight_agent import generate_insight
+from typing import Optional
 
-=======
->>>>>>> main
+from fastapi import APIRouter
+import hashlib
+import uuid
+
+from app.services.cache_service import get_cache, set_cache
+from app.services.rule_engine import match_rule_based_query
+from app.services.table_selector import select_relevant_tables
+from app.services.sql_generator import generate_sql
+from app.services.metadata_loader import load_table_metadata
+from app.services.db_executer import execute_sql
+from app.services.response_builder import build_response
+from app.services.insight_agent import generate_insight
+from app.agents.deep_agent import get_agent
+from app.utils.config import DEEP_AGENT_ENABLED, LLMConfig
 
 router = APIRouter()
 metadata = load_table_metadata()
+model = LLMConfig.MODELS.get("small")
+_agent = get_agent(model) if DEEP_AGENT_ENABLED else None
 
-def normalize_question(q: str) -> str:
-    return q.strip().lower()
+
+def _normalize(text: str) -> str:
+    return (text or "").strip().lower()
+
+@traceable(name="agent_call")
+def _agent_call(question: str, history: Optional[list] = None) -> dict:
+    if not _agent:
+        return {"error": "agent_not_configured"}
+    # prefer invoke if available (deepagents/langgraph), otherwise fallback to run()
+    try:
+        if hasattr(_agent, "invoke"):
+            messages = history or [{"role": "user", "content": question}]
+            print("Invoking agent with messages:", messages)  # debug log
+            return _agent.invoke({"messages": messages})
+        if hasattr(_agent, "run"):
+            return _agent.run(question)
+        return {"error": "unsupported_agent_interface"}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @router.post("/ask")
 async def ask_question(payload: dict) -> dict:
     question = payload.get("question")
-
     if not question:
-        return {"error": "Question is required"}
+        return {"error": "question is required"}
 
-    normalized = normalize_question(question)
-    key = hashlib.md5(normalized.encode()).hexdigest()
+    conv_id: Optional[str] = payload.get("conversation_id")
+    followup = payload.get("followup")
 
-    # 1️⃣ CACHE CHECK
+    key = hashlib.md5(_normalize(question).encode()).hexdigest()
     cached = get_cache(key)
     if cached:
-        return {
-            "answer": cached,
-            "source": "cache"
-        }
+        return {"answer": cached, "source": "cache"}
 
-    # 2️⃣ RULE ENGINE (No AI cost)
-    sql_query = match_rule_based_query(question)
-    if sql_query:
-        answer = f"(Rule-based SQL generated)\n{sql_query}"
-        set_cache(key, answer)
+    # rule-based short-circuit
+    rule_sql = match_rule_based_query(question)
+    if rule_sql:
+        set_cache(key, rule_sql)
+        return {"answer": rule_sql, "sql_used": rule_sql, "source": "rule_engine"}
 
-        return {
-            "answer": answer,
-            "sql_used": sql_query,
-            "source": "rule_engine"
-        }
-
-    # 3️⃣ TABLE SELECTION USING FAISS
     selected_tables = select_relevant_tables(question)
 
-    # 4️⃣ LLM SQL GENERATION (schema-aware)
+    # Agent path
+    if _agent:
+        # resume conversation if followup provided
+        history = None
+        if conv_id and followup:
+            conv_key = f"conv:{conv_id}"
+            state = get_cache(conv_key) or {}
+            history = state.get("history", [])
+            history.append({"role": "user", "content": followup})
+            state["history"] = history
+            state["turns"] = state.get("turns", 0) + 1
+            set_cache(conv_key, state)
+
+        result = _agent_call(question if not history else None, history)
+        print("Agent result:", result)  # debug log
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        # If agent explicitly asks for clarification or returns messages,
+        # return a clarify payload for the frontend to handle.
+        # if result.get("clarify"):
+        #     conv_id = conv_id or uuid.uuid4().hex
+        #     conv_key = f"conv:{conv_id}"
+        #     state = get_cache(conv_key) or {}
+        #     state.setdefault("history", [{"role": "user", "content": question}])
+        #     state.setdefault("turns", 0)
+        #     state["last_clarify"] = result.get("question")
+        #     set_cache(conv_key, state)
+        #     return {"clarify": True, "conversation_id": conv_id, "question": result.get("question"), "source": "deep_agent"}
+
+        messages = result.get("messages")
+        # Handle chat-style messages (langchain objects)
+        if messages:
+            def _get_msg_content(m):
+                if m is None:
+                    return ""
+                if isinstance(m, dict):
+                    return m.get("content") or m.get("text") or ""
+                # LangChain message objects usually have `content` attribute
+                txt = getattr(m, "content", None) or getattr(m, "text", None)
+                if txt:
+                    return txt
+                try:
+                    return str(m)
+                except Exception:
+                    return ""
+
+            def _infer_role(m):
+                if isinstance(m, dict):
+                    return m.get("role") or ("assistant" if m.get("author") == "ai" else "user")
+                cls = getattr(m, "__class__", None)
+                if cls is not None:
+                    name = cls.__name__.lower()
+                    if "ai" in name or "assistant" in name:
+                        return "assistant"
+                # default
+                return "user"
+
+            def _is_clarifying(text: str) -> bool:
+                if not text:
+                    return False
+                low = text.lower()
+                triggers = [
+                    "please specify",
+                    "could you",
+                    "which",
+                    "do you mean",
+                    "clarify",
+                    "could you please",
+                    "which metric",
+                    "do you want",
+                    "would you like",
+                    "which of the following",
+                ]
+                if "?" in text:
+                    return True
+                return any(t in low for t in triggers)
+
+            last = messages[-1]
+            last_text = _get_msg_content(last).strip()
+            print("Last agent message:", last_text)  # debug log
+            print("Is clarifying?", _is_clarifying(last_text))  # debug log
+            if _is_clarifying(last_text):
+                conv_id = conv_id or uuid.uuid4().hex
+                conv_key = f"conv:{conv_id}"
+                # normalize history
+                hist = []
+                for m in messages:
+                    hist.append({"role": _infer_role(m), "content": _get_msg_content(m)})
+
+                state = get_cache(conv_key) or {}
+                state["history"] = hist
+                state["turns"] = state.get("turns", 0) + 1
+                state["last_clarify"] = last_text
+                state["options"] = result.get("options") or []
+                set_cache(conv_key, state)
+                return {"clarify": True, "conversation_id": conv_id, "question": last_text, "options": state["options"], "source": "deep_agent"}
+            # If messages exist but aren't a clarifying question, return the
+            # assistant's last message content as a textual answer.
+            assistant_texts = [ _get_msg_content(m) for m in messages if _infer_role(m) == "assistant" ]
+            if assistant_texts:
+                final_text = assistant_texts[-1].strip()
+                set_cache(key, final_text)
+                # clear conversation state if present
+                if conv_id:
+                    set_cache(f"conv:{conv_id}", {})
+                return {"answer": {"type": "text", "message": final_text}, "source": "deep_agent"}
+
+        # Otherwise expect final result with columns/rows
+        columns = result.get("columns")
+        rows = result.get("rows")
+        sql_used = result.get("sql_used")
+        insight = None
+        if rows and len(rows) > 1:
+            try:
+                insight = generate_insight(question, columns, rows)
+            except Exception:
+                insight = None
+        answer = build_response(columns, rows, insight)
+        set_cache(key, answer)
+        # clear conversation state if present
+        if conv_id:
+            set_cache(f"conv:{conv_id}", {})
+        return {"answer": answer, "sql_used": sql_used, "tables_used": selected_tables, "source": "deep_agent"}
+
+    # Fallback LLM SQL generation path
     try:
         sql_query = generate_sql(question, selected_tables, metadata)
     except Exception as e:
-        return {"error": f"SQL generation failed: {str(e)}"}
+        return {"error": f"sql generation failed: {e}"}
 
-    safe_sql = sql_query
-    # 5️⃣ SQL SAFETY VALIDATION
-    # try:
-    #     safe_sql = validate_sql(sql_query, selected_tables)
-    # except Exception as e:
-    #     return {"error": f"SQL blocked by safety layer: {str(e)}"}
-    
-    # 6️⃣ EXECUTE SQL
     try:
-        columns, rows = execute_sql(safe_sql)
+        columns, rows = execute_sql(sql_query)
     except Exception as e:
-        return {"error": f"Database execution failed: {str(e)}"}
+        return {"error": f"db execution failed: {e}"}
 
-    # Generate insight only for multi-row tables
     insight = None
-    print("Rows Detected : ", len(rows))
-    if len(rows) > 1:
+    if rows and len(rows) > 1:
         try:
             insight = generate_insight(question, columns, rows)
-        except Exception as e:
-            raise("Insight Generation failed  : ", e)
-            # insight = None  # Fail silently if LLM fails
-    
-    # 7️⃣ BUILD HUMAN RESPONSE
+        except Exception:
+            insight = None
+
     answer = build_response(columns, rows, insight)
-
     set_cache(key, answer)
+    return {"answer": answer, "sql_used": sql_query, "tables_used": selected_tables, "source": "llm_sql_generator"}
 
-    return {
-        "answer": answer,
-        "sql_used": safe_sql,
-        "tables_used": selected_tables,
-        "source": "llm_sql_generator_validated"
-    }

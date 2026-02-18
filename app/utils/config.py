@@ -45,3 +45,7 @@ class SQLValidatorConfig:
     ]
 
     MAX_LIMIT = 1000
+
+
+# Feature flags
+DEEP_AGENT_ENABLED = os.getenv("DEEP_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")

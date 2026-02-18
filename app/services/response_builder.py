@@ -1,7 +1,4 @@
-<<<<<<< HEAD
 def build_response(columns, rows, insight=None):
-=======
-def build_response(columns, rows):
     """Return a structured response dict for the front-end from SQL results.
 
     Args:
@@ -11,7 +8,6 @@ def build_response(columns, rows):
     Return:
      - A dict representing either a textual summary or a tabular payload.
     """
->>>>>>> main
     if not rows:
         return {
             "type": "text",

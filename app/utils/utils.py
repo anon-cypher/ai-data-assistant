@@ -16,6 +16,26 @@ def _make_client():
 
     return OpenAI(api_key=api_key, **kwargs)
 
+def _load_lm_model(model_key: str):
+    """Load and return the LM model name from config based on `model_key`.
+
+    Args:
+     - model_key: The key to look up in `LLMConfig.MODELS`. If not found, this
+         value will be returned directly, allowing for passing explicit model names.
+    Return:
+     - The model name string to use for LLM calls.
+    """
+    from langchain_openai import ChatOpenAI
+
+    model = ChatOpenAI(
+        model=model_key,
+        temperature=0,
+        max_tokens=300,
+        api_key=LLMConfig.OPENAI_API_KEY_ENV,
+        base_url=LLMConfig.OPENAI_BASE_URL
+    )
+
+    return model
 
 def llm_chat(prompt: str, model_key: str = "small", temperature: float | None = None, max_tokens: int | None = None) -> str:
     """Call the LLM chat/completions API and return the assistant text.
