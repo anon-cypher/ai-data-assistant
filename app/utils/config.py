@@ -49,3 +49,13 @@ class SQLValidatorConfig:
 
 # Feature flags
 DEEP_AGENT_ENABLED = os.getenv("DEEP_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
+
+# Logging configuration
+# `LOG_ROTATION_WHEN` uses TimedRotatingFileHandler semantics: S, M, H, D, W0-W6.
+# For a monthly-like rotation use `D` with `LOG_ROTATION_INTERVAL=30` (default).
+LOG_DIR = os.getenv("LOG_DIR", "logs")
+LOG_FILE = os.getenv("LOG_FILE", "assistant.log")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_ROTATION_WHEN = os.getenv("LOG_ROTATION_WHEN", "D")
+LOG_ROTATION_INTERVAL = int(os.getenv("LOG_ROTATION_INTERVAL", "30"))
+LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "12"))

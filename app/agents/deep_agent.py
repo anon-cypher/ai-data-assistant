@@ -9,6 +9,8 @@ This module exposes:
     or the lightweight `DeepAgent`.
 """
 
+from app.utils.logging import get_logger, log_exception
+
 from typing import Optional, Dict, Any, List
 import os
 import logging
@@ -78,8 +80,13 @@ class DeepAgent:
 
         Args:
          - question: Natural-language question to handle.
-         - max_iterations: How many generate/fix cycles to attempt before asking for clarification.
-
+                try:
+                    fixed = llm_chat(prompt, model_key="small")
+                    return fixed.strip() if fixed else None
+                except Exception as e:
+                    logger = get_logger(__name__)
+                    log_exception(logger, e, "_attempt_fix_sql failed")
+                    return None
         Return:
          - On success: dict containing `answer`, `sql_used`, `columns`, `rows`, `source`.
          - If clarification is required: dict with `clarify: True` and a `question` string.

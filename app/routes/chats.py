@@ -9,31 +9,18 @@ from app.services.rule_engine import match_rule_based_query
 from app.services.table_selector import select_relevant_tables
 from app.services.sql_generator import generate_sql
 from app.services.metadata_loader import load_table_metadata
-from app.services.sql_validator import validate_sql
-from app.services.db_executer import execute_sql
-from app.services.response_builder import build_response
-from app.services.insight_agent import generate_insight
-from typing import Optional
-
-from fastapi import APIRouter
-import hashlib
-import uuid
-
-from app.services.cache_service import get_cache, set_cache
-from app.services.rule_engine import match_rule_based_query
-from app.services.table_selector import select_relevant_tables
-from app.services.sql_generator import generate_sql
-from app.services.metadata_loader import load_table_metadata
 from app.services.db_executer import execute_sql
 from app.services.response_builder import build_response
 from app.services.insight_agent import generate_insight
 from app.agents.deep_agent import get_agent
 from app.utils.config import DEEP_AGENT_ENABLED, LLMConfig
+from app.utils.logging import get_logger, log_exception
 
 router = APIRouter()
 metadata = load_table_metadata()
 model = LLMConfig.MODELS.get("small")
 _agent = get_agent(model) if DEEP_AGENT_ENABLED else None
+logger = get_logger(__name__)
 
 
 def _normalize(text: str) -> str:
@@ -47,12 +34,13 @@ def _agent_call(question: str, history: Optional[list] = None) -> dict:
     try:
         if hasattr(_agent, "invoke"):
             messages = history or [{"role": "user", "content": question}]
-            print("Invoking agent with messages:", messages)  # debug log
+            logger.debug("Invoking agent with messages: %s", messages)
             return _agent.invoke({"messages": messages})
         if hasattr(_agent, "run"):
             return _agent.run(question)
         return {"error": "unsupported_agent_interface"}
     except Exception as e:
+        log_exception(logger, e, "agent call failed")
         return {"error": str(e)}
 
 
@@ -92,7 +80,7 @@ async def ask_question(payload: dict) -> dict:
             set_cache(conv_key, state)
 
         result = _agent_call(question if not history else None, history)
-        print("Agent result:", result)  # debug log
+        logger.debug("Agent result: %s", result)
         if result.get("error"):
             return {"error": result["error"]}
 
@@ -158,8 +146,8 @@ async def ask_question(payload: dict) -> dict:
 
             last = messages[-1]
             last_text = _get_msg_content(last).strip()
-            print("Last agent message:", last_text)  # debug log
-            print("Is clarifying?", _is_clarifying(last_text))  # debug log
+            logger.debug("Last agent message: %s", last_text)
+            logger.debug("Is clarifying? %s", _is_clarifying(last_text))
             if _is_clarifying(last_text):
                 conv_id = conv_id or uuid.uuid4().hex
                 conv_key = f"conv:{conv_id}"
@@ -194,7 +182,8 @@ async def ask_question(payload: dict) -> dict:
         if rows and len(rows) > 1:
             try:
                 insight = generate_insight(question, columns, rows)
-            except Exception:
+            except Exception as e:
+                log_exception(logger, e, "generate_insight failed")
                 insight = None
         answer = build_response(columns, rows, insight)
         set_cache(key, answer)
@@ -207,11 +196,13 @@ async def ask_question(payload: dict) -> dict:
     try:
         sql_query = generate_sql(question, selected_tables, metadata)
     except Exception as e:
+        log_exception(logger, e, "SQL generation failed in /ask")
         return {"error": f"sql generation failed: {e}"}
 
     try:
         columns, rows = execute_sql(sql_query)
     except Exception as e:
+        log_exception(logger, e, "DB execution failed in /ask")
         return {"error": f"db execution failed: {e}"}
 
     insight = None
